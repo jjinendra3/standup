@@ -1,0 +1,2 @@
+# Embedded text files keep LF on every checkout; Go strips CR only from .go raw strings, not from //go:embed files.
+*.txt text eol=lf
