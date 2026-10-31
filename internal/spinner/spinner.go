@@ -65,7 +65,8 @@ func (s *Spinner) run(w io.Writer, messages []string, start time.Time) {
 		width = redraw(w, line(i, time.Since(start), messages), width)
 		select {
 		case <-s.stop:
-			redraw(w, "", width)
+			// Two more blanks cover the ^C a terminal echoes after the line when the user presses Ctrl-C
+			redraw(w, "", width+len("^C"))
 			fmt.Fprint(w, "\r")
 			return
 		case <-ticker.C:

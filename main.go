@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"slices"
+	"syscall"
 	"time"
 
 	"github.com/jjinendra3/standup/internal/activity"
@@ -106,6 +107,10 @@ func run(args []string) int {
 		}
 	}
 
+	// The agent runs in its own session, so stop on a closed terminal or a kill too, which cleans up its processes
+	ctx, stopTerm := signal.NotifyContext(ctx, syscall.SIGHUP, syscall.SIGTERM)
+	defer stopTerm()
+
 	cfg, found, err := config.Load()
 	if err != nil {
 		return fail(err)
@@ -114,6 +119,9 @@ func run(args []string) int {
 	spin := startSpinner("Collecting your activity…")
 	report := activity.Collect(ctx, cfg, w)
 	spin.Stop()
+	if ctx.Err() != nil {
+		return interrupted()
+	}
 	for _, warning := range report.Warnings {
 		fmt.Fprintln(os.Stderr, "standup: "+warning)
 	}
@@ -152,6 +160,9 @@ func run(args []string) int {
 	spin = startSpinner(verbs...)
 	summary, err := summarize.Run(summaryCtx, cfg.Summarizer, prompt)
 	spin.Stop()
+	if ctx.Err() != nil {
+		return interrupted()
+	}
 	if err != nil {
 		return fail(fmt.Errorf("summary failed: %w", err))
 	}
@@ -173,6 +184,12 @@ func startSpinner(messages ...string) *spinner.Spinner {
 		return nil
 	}
 	return spinner.Start(os.Stderr, messages...)
+}
+
+// interrupted reports that standup was stopped and returns the exit code shells use for Ctrl-C.
+func interrupted() int {
+	fmt.Fprintln(os.Stderr, "standup: interrupted")
+	return 130
 }
 
 func fail(err error) int {
