@@ -133,6 +133,23 @@ next:
 	return dirs
 }
 
+// RepoDirFor returns the folder to add to repo_dirs so standup finds repo: the folder that holds it, or the
+// repo itself when that folder is the home directory or a root, where standup would search ~/Documents and the like.
+func RepoDirFor(repo string) string {
+	parent := filepath.Dir(repo)
+	if parent == filepath.Dir(parent) {
+		return repo
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		a, errA := os.Stat(parent)
+		b, errB := os.Stat(home)
+		if errA == nil && errB == nil && os.SameFile(a, b) {
+			return repo
+		}
+	}
+	return parent
+}
+
 // ExpandHome replaces a leading ~ with the home directory.
 func ExpandHome(path string) string {
 	if path != "~" && !strings.HasPrefix(path, "~/") {

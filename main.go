@@ -125,6 +125,10 @@ func run(args []string) int {
 	for _, warning := range report.Warnings {
 		fmt.Fprintln(os.Stderr, "standup: "+warning)
 	}
+	if report.OutsideRepo != "" {
+		fmt.Fprintf(os.Stderr, "standup: also read %s, the repo you're in. To include it from any folder, add %s to repo_dirs or run standup setup\n",
+			filepath.Base(report.OutsideRepo), config.RepoDirFor(report.OutsideRepo))
+	}
 	if report.Empty() {
 		fmt.Fprintf(os.Stderr, "No activity found for %s\n", mode)
 		if !found {

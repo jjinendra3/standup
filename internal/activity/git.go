@@ -63,9 +63,34 @@ func FindRepos(roots []string, depth int) []Repo {
 	return repos
 }
 
+// reposToRead returns the repos under roots and, when the roots miss it, the repo that contains dir.
+// outside is that repo's path, so the user can be told which folder to add.
+func reposToRead(ctx context.Context, roots []string, depth int, dir string) (repos []Repo, outside string) {
+	repos = FindRepos(roots, depth)
+	out, err := run.Output(ctx, dir, nil, "git", "rev-parse", "--show-toplevel")
+	path := filepath.FromSlash(strings.TrimSpace(out))
+	if err != nil || path == "" || includes(repos, path) {
+		return repos, ""
+	}
+	return append(repos, Repo{Path: path, Name: filepath.Base(path)}), path
+}
+
+// includes compares folders rather than path strings, which can differ in symlinks or letter case.
+func includes(repos []Repo, path string) bool {
+	want, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	for _, r := range repos {
+		if info, err := os.Stat(r.Path); err == nil && os.SameFile(info, want) {
+			return true
+		}
+	}
+	return false
+}
+
 // gitSection renders your git activity in the window. It also counts your commits and the repos with any activity.
-func gitSection(ctx context.Context, roots []string, depth int, w window.Window) (section string, commits, activeRepos int) {
-	repos := FindRepos(roots, depth)
+func gitSection(ctx context.Context, repos []Repo, w window.Window) (section string, commits, activeRepos int) {
 	results := make([]string, len(repos))
 	counts := make([]int, len(repos))
 	sem := make(chan struct{}, gitParallelism)

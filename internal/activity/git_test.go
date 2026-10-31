@@ -71,6 +71,44 @@ func TestFindRepos(t *testing.T) {
 	}
 }
 
+func TestReposToRead(t *testing.T) {
+	isolateGit(t)
+	root, elsewhere := t.TempDir(), t.TempDir()
+	covered := filepath.Join(root, "api")
+	newRepo(t, covered, "me@example.com")
+	src := filepath.Join(elsewhere, "side-project", "src")
+	newRepo(t, filepath.Dir(src), "me@example.com")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name, dir, wantNames, wantOutside string
+	}{
+		{"the repo you are in is added when the roots miss it", src, "api,side-project", "side-project"},
+		{"a repo the roots cover is not added twice", covered, "api", ""},
+		{"a folder outside any repo adds nothing", elsewhere, "api", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repos, outside := reposToRead(context.Background(), []string{root}, 2, tt.dir)
+			var names []string
+			for _, r := range repos {
+				names = append(names, r.Name)
+			}
+			if got := strings.Join(names, ","); got != tt.wantNames {
+				t.Errorf("repos %q, want %q", got, tt.wantNames)
+			}
+			if outside != "" {
+				outside = filepath.Base(outside)
+			}
+			if outside != tt.wantOutside {
+				t.Errorf("outside %q, want %q", outside, tt.wantOutside)
+			}
+		})
+	}
+}
+
 func TestGitSection(t *testing.T) {
 	isolateGit(t)
 	root := t.TempDir()
@@ -85,7 +123,7 @@ func TestGitSection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out, commits, repos := gitSection(context.Background(), []string{root}, 2, window.For(window.Today, time.Now()))
+	out, commits, repos := gitSection(context.Background(), FindRepos([]string{root}, 2), window.For(window.Today, time.Now()))
 	if commits != 1 || repos != 1 {
 		t.Errorf("counted %d commits in %d repos, want 1 in 1", commits, repos)
 	}
@@ -116,7 +154,7 @@ func TestGitSectionSkipsCommitsWithoutEmail(t *testing.T) {
 	commit(t, repo, "a.txt", "feat: someone else's work")
 	git(t, repo, nil, "config", "--unset", "user.email")
 
-	out, commits, _ := gitSection(context.Background(), []string{root}, 2, window.For(window.Today, time.Now()))
+	out, commits, _ := gitSection(context.Background(), FindRepos([]string{root}, 2), window.For(window.Today, time.Now()))
 	if strings.Contains(out, "Commits by me") || commits != 0 {
 		t.Errorf("an empty author must not match every commit, counted %d:\n%s", commits, out)
 	}
