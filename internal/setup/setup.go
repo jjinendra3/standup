@@ -10,10 +10,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/jjinendra3/standup/internal/activity"
 	"github.com/jjinendra3/standup/internal/config"
+	"github.com/jjinendra3/standup/internal/picker"
 	"github.com/jjinendra3/standup/internal/run"
 	"github.com/jjinendra3/standup/internal/summarize"
 )
@@ -21,17 +23,24 @@ import (
 type agentInfo struct {
 	label        string
 	defaultModel string
-	install      string
+	// models are offered in setup; with none, setup does not ask and the agent uses its own default
+	models  []string
+	install string
 }
 
 var agents = map[string]agentInfo{
-	config.AgentClaude: {"Claude Code (claude)", "sonnet", "Install Claude Code from https://claude.com/claude-code"},
-	config.AgentCodex:  {"Codex (codex)", "", "Install Codex with: npm install -g @openai/codex"},
+	config.AgentClaude: {"Claude Code (claude)", "sonnet", []string{"sonnet", "opus", "fable"}, "Install Claude Code from https://claude.com/claude-code"},
+	config.AgentCodex:  {"Codex (codex)", "", nil, "Install Codex with: npm install -g @openai/codex"},
 }
 
 // Run asks the setup questions on in and out, then saves the settings file.
 func Run(ctx context.Context, in io.Reader, out io.Writer) error {
 	p := prompter{in: bufio.NewReader(in), out: out}
+	if tty, ok := in.(*os.File); ok {
+		if o, ok := out.(*os.File); ok && picker.Available(tty, o) {
+			p.tty = tty
+		}
+	}
 	cfg, _, err := config.Load()
 	if err != nil {
 		return err
@@ -43,7 +52,9 @@ func Run(ctx context.Context, in io.Reader, out io.Writer) error {
 	ghOK := ensureGH(ctx, p)
 
 	p.section("2. Who writes the standup")
-	chooseSummarizer(p, &cfg.Summarizer)
+	if err := chooseSummarizer(p, &cfg.Summarizer); err != nil {
+		return err
+	}
 
 	p.section("3. Activity sources")
 	chooseSources(p, &cfg, gitOK, ghOK)
@@ -139,7 +150,8 @@ func interactive(ctx context.Context, name string, args ...string) error {
 	return cmd.Run()
 }
 
-func chooseSummarizer(p prompter, s *config.Summarizer) {
+// chooseSummarizer offers Claude Code and Codex. A custom command is still set by hand with agent = "command".
+func chooseSummarizer(p prompter, s *config.Summarizer) error {
 	var options []string
 	def := 0
 	for i, name := range summarize.Agents {
@@ -155,19 +167,14 @@ func chooseSummarizer(p prompter, s *config.Summarizer) {
 		}
 		options = append(options, fmt.Sprintf("%s, %s", agents[name].label, status))
 	}
-	options = append(options, "Another command that reads the prompt on stdin and prints the standup")
-	if s.Agent == config.AgentCommand || def == 0 {
-		def = len(options)
+	if def == 0 {
+		def = 1
 	}
-	choice := p.choose("Which agent should write your standup? It runs without tools or file access.", options, def)
+	choice, err := p.choose("Which agent should write your standup? It runs without tools or file access.", options, def)
+	if err != nil {
+		return err
+	}
 
-	if choice == len(options) {
-		s.Agent = config.AgentCommand
-		current := strings.Join(s.Command, " ")
-		s.Command = strings.Fields(p.ask("Command, with its arguments (no shell quoting), for example `llm -m gpt-5`", current))
-		s.Model = ""
-		return
-	}
 	name := summarize.Agents[choice-1]
 	info := agents[name]
 	if _, err := exec.LookPath(name); err != nil {
@@ -178,17 +185,30 @@ func chooseSummarizer(p prompter, s *config.Summarizer) {
 		model = info.defaultModel
 	}
 	s.Agent, s.Command = name, nil
-	s.Model = p.ask(`Model to use. Type "default" for the agent's own default`, orDefault(model))
-	if s.Model == "default" {
-		s.Model = ""
-	}
+	s.Model, err = chooseModel(p, info.models, model)
+	return err
 }
 
-func orDefault(model string) string {
-	if model == "" {
-		return "default"
+// chooseModel offers the agent's models, the current one when it is something else, and the agent's own default,
+// which is saved as an empty model. With no models to offer it keeps the current one.
+func chooseModel(p prompter, models []string, current string) (string, error) {
+	if len(models) == 0 {
+		return current, nil
 	}
-	return model
+	options := slices.Clone(models)
+	if current != "" && !slices.Contains(options, current) {
+		options = append(options, current)
+	}
+	def := slices.Index(options, current) + 1
+	options = append(options, "default (the agent picks)")
+	if current == "" {
+		def = len(options)
+	}
+	choice, err := p.choose("Model to use", options, def)
+	if err != nil || choice == len(options) {
+		return "", err
+	}
+	return options[choice-1], nil
 }
 
 func chooseSources(p prompter, cfg *config.Config, gitOK, ghOK bool) {
