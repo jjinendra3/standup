@@ -3,6 +3,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"github.com/jjinendra3/standup/internal/clipboard"
 	"github.com/jjinendra3/standup/internal/config"
 	"github.com/jjinendra3/standup/internal/constants"
+	"github.com/jjinendra3/standup/internal/picker"
 	"github.com/jjinendra3/standup/internal/setup"
 	"github.com/jjinendra3/standup/internal/spinner"
 	"github.com/jjinendra3/standup/internal/summarize"
@@ -72,6 +74,10 @@ func run(args []string) int {
 
 	if len(args) > 0 && args[0] == "setup" {
 		if err := setup.Run(ctx, os.Stdin, os.Stdout); err != nil {
+			// Ctrl-C cancels ctx at a typed question; in the arrow-key picker the terminal sends it as a key
+			if errors.Is(err, picker.ErrInterrupted) || ctx.Err() != nil {
+				return interrupted()
+			}
 			return fail(err)
 		}
 		return 0
@@ -156,7 +162,8 @@ func run(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	fmt.Fprintf(os.Stderr, "Writing your %s standup with %s…\n", mode, agent)
+	// The blank line keeps the spinner, and then the standup, apart from the status above
+	fmt.Fprintf(os.Stderr, "Writing your %s standup with %s…\n\n", mode, agent)
 	summaryCtx, cancel := context.WithTimeout(ctx, summaryTimeout)
 	defer cancel()
 	verbs := slices.Clone(writingVerbs)

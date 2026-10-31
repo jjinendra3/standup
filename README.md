@@ -39,7 +39,7 @@ standup setup
 Setup walks you through:
 
 1. **Tools.** Checks for git, offers to install the GitHub CLI (`gh`) and run `gh auth login`.
-2. **Who writes the standup.** Claude Code, Codex, or any command that reads a prompt on stdin.
+2. **Who writes the standup.** Claude Code or Codex, picked with the arrow keys, then the Claude model. To use another tool, set `agent = "command"` in the settings file below.
 3. **Sources.** Shows what it found and lets you turn sources off.
 4. **Repo folders.** Finds the folders that hold your repos, such as `~/code` or `~/Repos`.
 
