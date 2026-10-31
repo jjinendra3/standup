@@ -98,22 +98,6 @@ command = []                         # for agent = "command"
 
 CI runs the tests on macOS, Linux and Windows. The clipboard uses `pbcopy`, `clip`, or `wl-copy`/`xclip`/`xsel` on Linux.
 
-### Raycast (macOS)
-
-Raycast doesn't load your shell profile, so the script sets `PATH` itself. Save it in your Raycast script commands folder:
-
-```sh
-#!/bin/bash
-# @raycast.schemaVersion 1
-# @raycast.title Standup
-# @raycast.mode silent
-# @raycast.argument1 { "type": "text", "placeholder": "today | yesterday", "optional": true }
-export PATH="$HOME/.local/bin:$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
-standup "${1:-today}" --copy 2>&1 >/dev/null | tail -1
-```
-
-If your agent needs anything else from your shell profile, export it here too, such as `NODE_EXTRA_CA_CERTS` behind a corporate proxy.
-
 ## Development
 
 ```sh

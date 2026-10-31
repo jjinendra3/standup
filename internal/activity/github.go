@@ -31,20 +31,22 @@ type ghPR struct {
 
 func (p ghPR) ref() string { return fmt.Sprintf("%s#%d", p.Repository.NameWithOwner, p.Number) }
 
-// githubSection lists your PRs and reviews in the window using the gh CLI. found reports whether any PR was listed.
-func githubSection(ctx context.Context, w window.Window) (section string, found bool, warnings []string) {
+// githubSection lists your PRs and reviews in the window using the gh CLI. It also counts your distinct PRs
+// and the other people's PRs you reviewed.
+func githubSection(ctx context.Context, w window.Window) (section string, prs, reviews int, warnings []string) {
 	if _, err := exec.LookPath("gh"); err != nil {
-		return "", false, []string{"skipping GitHub: gh is not installed. Run standup setup, or install it from https://cli.github.com"}
+		return "", 0, 0, []string{"skipping GitHub: gh is not installed. Run standup setup, or install it from https://cli.github.com"}
 	}
 	out, err := run.Output(ctx, "", nil, "gh", "api", "user", "--jq", ".login")
 	if err != nil {
-		return "", false, []string{"skipping GitHub: gh is not logged in. Run gh auth login"}
+		return "", 0, 0, []string{"skipping GitHub: gh is not logged in. Run gh auth login"}
 	}
 	me := strings.TrimSpace(out)
 	rng := w.Since.UTC().Format(time.RFC3339) + ".." + w.Until.UTC().Format(time.RFC3339)
 
 	// Each search takes a few seconds, so run them in parallel
 	var authored, merged, reviewed []string
+	var authoredRefs, mergedRefs []string
 	var mu sync.Mutex
 	warn := func(err error) {
 		mu.Lock()
@@ -65,6 +67,7 @@ func githubSection(ctx context.Context, w window.Window) (section string, found 
 				state = "draft"
 			}
 			authored = append(authored, fmt.Sprintf("- %s [%s] %s", p.ref(), state, p.Title))
+			authoredRefs = append(authoredRefs, p.ref())
 		}
 	}()
 	go func() {
@@ -75,6 +78,7 @@ func githubSection(ctx context.Context, w window.Window) (section string, found 
 		}
 		for _, p := range prs {
 			merged = append(merged, fmt.Sprintf("- %s %s", p.ref(), p.Title))
+			mergedRefs = append(mergedRefs, p.ref())
 		}
 	}()
 	go func() {
@@ -82,6 +86,12 @@ func githubSection(ctx context.Context, w window.Window) (section string, found 
 		reviewed = reviewedPRs(ctx, me, rng, w, warn)
 	}()
 	wg.Wait()
+
+	// A PR merged in the window was also updated in it, so count each of your PRs once
+	mine := map[string]bool{}
+	for _, ref := range append(authoredRefs, mergedRefs...) {
+		mine[ref] = true
+	}
 
 	var b strings.Builder
 	for _, s := range []struct {
@@ -96,9 +106,8 @@ func githubSection(ctx context.Context, w window.Window) (section string, found 
 		for _, item := range s.items {
 			b.WriteString(item + "\n")
 		}
-		found = found || len(s.items) > 0
 	}
-	return b.String(), found, warnings
+	return b.String(), len(mine), len(reviewed), warnings
 }
 
 func searchPRs(ctx context.Context, fields string, qualifiers ...string) ([]ghPR, error) {
