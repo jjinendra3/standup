@@ -21,8 +21,8 @@ func TestLine(t *testing.T) {
 		{"first frame and message", 0, 0, messages, frames[0] + " Pondering… 0s"},
 		{"frames advance each tick", 1, 500 * time.Millisecond, messages, frames[1] + " Pondering… 0s"},
 		{"frames wrap around", len(frames), 0, messages, frames[0] + " Pondering… 0s"},
-		{"messages rotate with time", 0, messageEvery, messages, frames[0] + " Drafting… 3s"},
-		{"messages wrap around", 0, 2*messageEvery + time.Second, messages, frames[0] + " Pondering… 7s"},
+		{"messages rotate with time", 0, messageEvery, messages, frames[0] + " Drafting… 5s"},
+		{"messages wrap around", 0, 2*messageEvery + time.Second, messages, frames[0] + " Pondering… 11s"},
 		{"no messages shows only the time", 0, 61 * time.Second, nil, frames[0] + " 1m1s"},
 	}
 	for _, tt := range tests {

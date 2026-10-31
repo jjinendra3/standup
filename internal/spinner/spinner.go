@@ -14,7 +14,7 @@ import (
 
 const (
 	frameEvery   = 100 * time.Millisecond
-	messageEvery = 3 * time.Second
+	messageEvery = 5 * time.Second
 )
 
 // Braille dots draw a smooth circle on macOS and Linux; older Windows console fonts lack them.
