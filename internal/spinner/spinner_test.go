@@ -50,7 +50,7 @@ func TestStopClearsTheLine(t *testing.T) {
 	s.Stop()
 	s.Stop() // a second Stop must not panic or block
 
-	// The output is "\r<line>…\r<spaces>\r": blanks as wide as the last line, then back to column 0.
+	// The output is "\r<line>…\r<spaces>\r": blanks as wide as the last line plus an echoed ^C, then back to column 0.
 	segments := strings.Split(b.String(), "\r")
 	if len(segments) < 4 || segments[len(segments)-1] != "" {
 		t.Fatalf("output %q does not end with a cleared line", b.String())
@@ -60,7 +60,7 @@ func TestStopClearsTheLine(t *testing.T) {
 	if !strings.Contains(last, "Pondering…") {
 		t.Errorf("last line %q does not show the message", last)
 	}
-	if strings.TrimSpace(blank) != "" || len([]rune(blank)) != len([]rune(last)) {
+	if strings.TrimSpace(blank) != "" || len([]rune(blank)) != len([]rune(last))+len("^C") {
 		t.Errorf("clearing segment %q does not blank %q", blank, last)
 	}
 }

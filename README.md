@@ -61,7 +61,7 @@ Everything is read locally. Nothing is uploaded except the final prompt, which g
 
 | Source | What | Where |
 | --- | --- | --- |
-| `git` | Your commits on any branch, branch switches, rebases and merges, and uncommitted changes touched in the window | Repos up to `repo_depth` folders below each of `repo_dirs` |
+| `git` | Your commits on any branch, branch switches, rebases and merges, and uncommitted changes touched in the window | Repos up to `repo_depth` folders below each of `repo_dirs`, and the repo you run it in |
 | `github` | PRs you opened, updated or merged, and other people's PRs you reviewed | `gh` CLI |
 | `claude` | Each prompt you typed and Claude's last reply before your next prompt | `~/.claude/projects` (or `$CLAUDE_CONFIG_DIR`) |
 | `codex` | Each prompt you typed and Codex's last reply | `~/.codex/sessions` (or `$CODEX_HOME`) |

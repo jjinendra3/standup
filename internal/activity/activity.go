@@ -20,6 +20,8 @@ type Report struct {
 	// Warnings describe sources that were skipped or only partly read
 	Warnings []string
 	Counts   Counts
+	// OutsideRepo is the repo standup ran in when repo_dirs does not cover it. Collect reads it anyway.
+	OutsideRepo string
 
 	hasGitHubPRs bool
 }
@@ -61,11 +63,12 @@ func Collect(ctx context.Context, cfg config.Config, w window.Window) Report {
 	}
 
 	start("git", func() {
-		s, commits, repos := gitSection(ctx, cfg.RepoDirs, cfg.RepoDepth, w)
+		repos, outside := reposToRead(ctx, cfg.RepoDirs, cfg.RepoDepth, "")
+		s, commits, active := gitSection(ctx, repos, w)
 		mu.Lock()
 		defer mu.Unlock()
-		r.Git = s
-		r.Counts.Commits, r.Counts.Repos = commits, repos
+		r.Git, r.OutsideRepo = s, outside
+		r.Counts.Commits, r.Counts.Repos = commits, active
 	})
 	start("github", func() {
 		s, prs, reviews, warnings := githubSection(ctx, w)

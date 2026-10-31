@@ -31,6 +31,27 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRepoDirFor(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	root := string(filepath.Separator)
+	tests := []struct {
+		name, repo, want string
+	}{
+		{"the folder that holds the repo", filepath.Join(home, "Personal", "standup"), filepath.Join(home, "Personal")},
+		{"the repo itself when it sits in the home folder", filepath.Join(home, "standup"), filepath.Join(home, "standup")},
+		{"the repo itself when it sits in a root", root + "standup", root + "standup"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := RepoDirFor(tt.repo); got != tt.want {
+				t.Errorf("RepoDirFor(%q) = %q, want %q", tt.repo, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestLoadMissingFileUsesDefaults(t *testing.T) {
 	t.Setenv("STANDUP_CONFIG", filepath.Join(t.TempDir(), "missing.toml"))
 	cfg, found, err := Load()
