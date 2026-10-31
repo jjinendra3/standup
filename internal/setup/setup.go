@@ -35,7 +35,7 @@ var agents = map[string]agentInfo{
 
 // Run asks the setup questions on in and out, then saves the settings file.
 func Run(ctx context.Context, in io.Reader, out io.Writer) error {
-	p := prompter{in: bufio.NewReader(in), out: out}
+	p := prompter{ctx: ctx, in: bufio.NewReader(in), out: out}
 	if tty, ok := in.(*os.File); ok {
 		if o, ok := out.(*os.File); ok && picker.Available(tty, o) {
 			p.tty = tty
@@ -49,7 +49,10 @@ func Run(ctx context.Context, in io.Reader, out io.Writer) error {
 
 	p.section("1. Tools")
 	gitOK := checkGit(p)
-	ghOK := ensureGH(ctx, p)
+	ghOK, err := ensureGH(ctx, p)
+	if err != nil {
+		return err
+	}
 
 	p.section("2. Who writes the standup")
 	if err := chooseSummarizer(p, &cfg.Summarizer); err != nil {
@@ -57,11 +60,15 @@ func Run(ctx context.Context, in io.Reader, out io.Writer) error {
 	}
 
 	p.section("3. Activity sources")
-	chooseSources(p, &cfg, gitOK, ghOK)
+	if err := chooseSources(p, &cfg, gitOK, ghOK); err != nil {
+		return err
+	}
 
 	if cfg.HasSource("git") {
 		p.section("4. Repo folders")
-		chooseRepoDirs(p, &cfg)
+		if err := chooseRepoDirs(p, &cfg); err != nil {
+			return err
+		}
 	}
 
 	path, err := config.Save(cfg)
@@ -89,41 +96,56 @@ func checkGit(p prompter) bool {
 }
 
 // ensureGH offers to install the GitHub CLI and log in, and reports whether it is ready to use.
-func ensureGH(ctx context.Context, p prompter) bool {
+// A command that fails because Ctrl-C cancelled ctx returns ctx.Err(), so setup stops instead of reporting it.
+func ensureGH(ctx context.Context, p prompter) (bool, error) {
 	if _, err := exec.LookPath("gh"); err != nil {
 		install := ghInstallCommand()
 		if install == nil {
 			p.fail("GitHub CLI (gh) is not installed. Install it from https://cli.github.com to include your PRs and reviews")
-			return false
+			return false, nil
 		}
-		if !p.confirm(fmt.Sprintf("GitHub CLI (gh) is not installed. It lists your PRs and reviews. Install it now with `%s`?", strings.Join(install, " ")), true) {
-			return false
+		yes, err := p.confirm(fmt.Sprintf("GitHub CLI (gh) is not installed. It lists your PRs and reviews. Install it now with `%s`?", strings.Join(install, " ")), true)
+		if !yes || err != nil {
+			return false, err
 		}
 		if err := interactive(ctx, install[0], install[1:]...); err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
 			p.fail("installing gh failed: " + err.Error())
-			return false
+			return false, nil
 		}
 		if _, err := exec.LookPath("gh"); err != nil {
 			p.fail("gh was installed but is not on PATH yet. Open a new terminal and run standup setup again")
-			return false
+			return false, nil
 		}
 	}
 	login, err := run.Output(ctx, "", nil, "gh", "api", "user", "--jq", ".login")
 	if err != nil {
-		if !p.confirm("gh is not logged in to GitHub. Log in now with `gh auth login`?", true) {
-			return false
+		if ctx.Err() != nil {
+			return false, ctx.Err()
+		}
+		yes, err := p.confirm("gh is not logged in to GitHub. Log in now with `gh auth login`?", true)
+		if !yes || err != nil {
+			return false, err
 		}
 		if err := interactive(ctx, "gh", "auth", "login"); err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
 			p.fail("gh auth login failed: " + err.Error())
-			return false
+			return false, nil
 		}
 		if login, err = run.Output(ctx, "", nil, "gh", "api", "user", "--jq", ".login"); err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
 			p.fail("gh is still not logged in: " + err.Error())
-			return false
+			return false, nil
 		}
 	}
 	p.ok("gh is logged in as " + strings.TrimSpace(login))
-	return true
+	return true, nil
 }
 
 func ghInstallCommand() []string {
@@ -211,7 +233,7 @@ func chooseModel(p prompter, models []string, current string) (string, error) {
 	return options[choice-1], nil
 }
 
-func chooseSources(p prompter, cfg *config.Config, gitOK, ghOK bool) {
+func chooseSources(p prompter, cfg *config.Config, gitOK, ghOK bool) error {
 	home, _ := os.UserHomeDir()
 	exists := func(path string) bool { _, err := os.Stat(path); return err == nil }
 	claudeDir := filepath.Join(home, ".claude", "projects")
@@ -240,30 +262,48 @@ func chooseSources(p prompter, cfg *config.Config, gitOK, ghOK bool) {
 			p.fail(s.label + ": not available")
 		}
 	}
-	if p.confirm("Use all the available sources?", true) {
+	all, err := p.confirm("Use all the available sources?", true)
+	if err != nil {
+		return err
+	}
+	if all {
 		cfg.Sources = found
-		return
+		return nil
 	}
 	cfg.Sources = nil
 	for _, s := range available {
-		if s.ready && p.confirm("Include "+s.label+"?", true) {
+		if !s.ready {
+			continue
+		}
+		include, err := p.confirm("Include "+s.label+"?", true)
+		if err != nil {
+			return err
+		}
+		if include {
 			cfg.Sources = append(cfg.Sources, s.name)
 		}
 	}
+	return nil
 }
 
-func chooseRepoDirs(p prompter, cfg *config.Config) {
+func chooseRepoDirs(p prompter, cfg *config.Config) error {
 	for {
 		repos := activity.FindRepos(cfg.RepoDirs, cfg.RepoDepth)
 		if len(cfg.RepoDirs) == 0 {
 			p.fail("No repo folders found in the usual places")
 		} else {
 			p.ok(fmt.Sprintf("Found %d repos in %s", len(repos), strings.Join(cfg.RepoDirs, ", ")))
-			if len(repos) > 0 && p.confirm("Use these folders?", true) {
-				return
+			if len(repos) > 0 {
+				use, err := p.confirm("Use these folders?", true)
+				if err != nil || use {
+					return err
+				}
 			}
 		}
-		answer := p.ask("Folders that hold your repos, separated by commas", strings.Join(cfg.RepoDirs, ", "))
+		answer, err := p.ask("Folders that hold your repos, separated by commas", strings.Join(cfg.RepoDirs, ", "))
+		if err != nil {
+			return err
+		}
 		var dirs []string
 		for _, d := range strings.Split(answer, ",") {
 			if d = strings.TrimSpace(d); d != "" {
@@ -272,7 +312,7 @@ func chooseRepoDirs(p prompter, cfg *config.Config) {
 		}
 		// Stop when the answer is empty or unchanged, so running out of input cannot loop forever
 		if len(dirs) == 0 || strings.Join(dirs, ",") == strings.Join(cfg.RepoDirs, ",") {
-			return
+			return nil
 		}
 		cfg.RepoDirs = dirs
 	}

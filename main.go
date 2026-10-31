@@ -74,7 +74,8 @@ func run(args []string) int {
 
 	if len(args) > 0 && args[0] == "setup" {
 		if err := setup.Run(ctx, os.Stdin, os.Stdout); err != nil {
-			if errors.Is(err, picker.ErrInterrupted) {
+			// Ctrl-C cancels ctx at a typed question; in the arrow-key picker the terminal sends it as a key
+			if errors.Is(err, picker.ErrInterrupted) || ctx.Err() != nil {
 				return interrupted()
 			}
 			return fail(err)

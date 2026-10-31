@@ -2,6 +2,7 @@ package setup
 
 import (
 	"bufio"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,7 +14,9 @@ import (
 )
 
 // prompter asks questions line by line. When input runs out, every question takes its default.
+// When ctx is cancelled, by Ctrl-C, the question waiting for an answer returns ctx.Err().
 type prompter struct {
+	ctx context.Context
 	in  *bufio.Reader
 	out io.Writer
 	tty *os.File // the terminal behind in, when choices can be picked with the arrow keys
@@ -23,37 +26,57 @@ func (p prompter) section(title string) { fmt.Fprintf(p.out, "\n%s\n", title) }
 func (p prompter) ok(msg string)        { fmt.Fprintf(p.out, "  ✓ %s\n", msg) }
 func (p prompter) fail(msg string)      { fmt.Fprintf(p.out, "  ✗ %s\n", msg) }
 
-func (p prompter) readLine() string {
-	line, _ := p.in.ReadString('\n')
-	return strings.TrimSpace(line)
+// readLine waits for the next line, or for ctx to be cancelled. A read from a terminal cannot be stopped,
+// so after a cancel it is left waiting, and standup exits without it. Once ctx is cancelled no new read starts.
+func (p prompter) readLine() (string, error) {
+	if p.ctx.Err() == nil {
+		line := make(chan string, 1)
+		go func() {
+			s, _ := p.in.ReadString('\n')
+			line <- s
+		}()
+		select {
+		case s := <-line:
+			return strings.TrimSpace(s), nil
+		case <-p.ctx.Done():
+		}
+	}
+	// End the prompt line, which now shows the ^C the terminal echoed
+	fmt.Fprintln(p.out)
+	return "", p.ctx.Err()
 }
 
-func (p prompter) ask(question, def string) string {
+func (p prompter) ask(question, def string) (string, error) {
 	if def != "" {
 		fmt.Fprintf(p.out, "  %s [%s]: ", question, def)
 	} else {
 		fmt.Fprintf(p.out, "  %s: ", question)
 	}
-	if answer := p.readLine(); answer != "" {
-		return answer
+	answer, err := p.readLine()
+	if answer == "" {
+		answer = def
 	}
-	return def
+	return answer, err
 }
 
-func (p prompter) confirm(question string, def bool) bool {
+func (p prompter) confirm(question string, def bool) (bool, error) {
 	hint := "Y/n"
 	if !def {
 		hint = "y/N"
 	}
 	for {
 		fmt.Fprintf(p.out, "  %s [%s]: ", question, hint)
-		switch strings.ToLower(p.readLine()) {
+		answer, err := p.readLine()
+		if err != nil {
+			return false, err
+		}
+		switch strings.ToLower(answer) {
 		case "":
-			return def
+			return def, nil
 		case "y", "yes":
-			return true
+			return true, nil
 		case "n", "no":
-			return false
+			return false, nil
 		}
 	}
 }
@@ -74,7 +97,10 @@ func (p prompter) choose(question string, options []string, def int) (int, error
 		fmt.Fprintf(p.out, "    %d) %s\n", i+1, o)
 	}
 	for {
-		answer := p.ask("Choose", strconv.Itoa(def))
+		answer, err := p.ask("Choose", strconv.Itoa(def))
+		if err != nil {
+			return 0, err
+		}
 		if n, err := strconv.Atoi(answer); err == nil && n >= 1 && n <= len(options) {
 			return n, nil
 		}
