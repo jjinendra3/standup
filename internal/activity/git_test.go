@@ -85,7 +85,10 @@ func TestGitSection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	out := gitSection(context.Background(), []string{root}, 2, window.For(window.Today, time.Now()))
+	out, commits, repos := gitSection(context.Background(), []string{root}, 2, window.For(window.Today, time.Now()))
+	if commits != 1 || repos != 1 {
+		t.Errorf("counted %d commits in %d repos, want 1 in 1", commits, repos)
+	}
 	for _, want := range []string{
 		"### api\n",
 		// Both branches point at this commit, so either name is a valid source
@@ -113,8 +116,8 @@ func TestGitSectionSkipsCommitsWithoutEmail(t *testing.T) {
 	commit(t, repo, "a.txt", "feat: someone else's work")
 	git(t, repo, nil, "config", "--unset", "user.email")
 
-	out := gitSection(context.Background(), []string{root}, 2, window.For(window.Today, time.Now()))
-	if strings.Contains(out, "Commits by me") {
-		t.Errorf("an empty author must not match every commit:\n%s", out)
+	out, commits, _ := gitSection(context.Background(), []string{root}, 2, window.For(window.Today, time.Now()))
+	if strings.Contains(out, "Commits by me") || commits != 0 {
+		t.Errorf("an empty author must not match every commit, counted %d:\n%s", commits, out)
 	}
 }

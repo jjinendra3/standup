@@ -19,8 +19,20 @@ type Report struct {
 	Sessions string
 	// Warnings describe sources that were skipped or only partly read
 	Warnings []string
+	Counts   Counts
 
 	hasGitHubPRs bool
+}
+
+// Counts tallies what Collect found, for the one-line summary shown before the agent runs.
+type Counts struct {
+	Commits int
+	// Repos had commits, branch activity or uncommitted work in the window
+	Repos   int
+	PRs     int
+	Reviews int
+	// Prompts counts every prompt found, including any beyond the ones the activity log keeps
+	Prompts int
 }
 
 // Collect reads every source enabled in cfg in parallel. A failing source adds a warning instead of failing the report.
@@ -49,16 +61,18 @@ func Collect(ctx context.Context, cfg config.Config, w window.Window) Report {
 	}
 
 	start("git", func() {
-		s := gitSection(ctx, cfg.RepoDirs, cfg.RepoDepth, w)
+		s, commits, repos := gitSection(ctx, cfg.RepoDirs, cfg.RepoDepth, w)
 		mu.Lock()
 		defer mu.Unlock()
 		r.Git = s
+		r.Counts.Commits, r.Counts.Repos = commits, repos
 	})
 	start("github", func() {
-		s, found, warnings := githubSection(ctx, w)
+		s, prs, reviews, warnings := githubSection(ctx, w)
 		mu.Lock()
 		defer mu.Unlock()
-		r.GitHub, r.hasGitHubPRs = s, found
+		r.GitHub, r.hasGitHubPRs = s, prs+reviews > 0
+		r.Counts.PRs, r.Counts.Reviews = prs, reviews
 		r.Warnings = append(r.Warnings, warnings...)
 	})
 	start("claude", func() {
@@ -70,12 +84,47 @@ func Collect(ctx context.Context, cfg config.Config, w window.Window) Report {
 		addTurns("Codex", t, failed)
 	})
 	wg.Wait()
+	r.Counts.Prompts = len(turns)
 	r.Sessions = formatTurns(turns)
 	return r
 }
 
 func (r Report) Empty() bool {
 	return r.Git == "" && !r.hasGitHubPRs && r.Sessions == ""
+}
+
+// Summary describes in one line what Collect found in the enabled sources,
+// such as "Found 12 commits across 4 repos, 3 PRs, 1 review and 41 agent prompts".
+func (r Report) Summary() string {
+	has := func(s string) bool { return config.Config{Sources: r.Sources}.HasSource(s) }
+	var parts []string
+	if has("git") {
+		part := plural(r.Counts.Commits, "commit")
+		if r.Counts.Repos > 0 {
+			part += " across " + plural(r.Counts.Repos, "repo")
+		}
+		parts = append(parts, part)
+	}
+	if has("github") {
+		parts = append(parts, plural(r.Counts.PRs, "PR"), plural(r.Counts.Reviews, "review"))
+	}
+	if has("claude") || has("codex") {
+		parts = append(parts, plural(r.Counts.Prompts, "agent prompt"))
+	}
+	switch len(parts) {
+	case 0:
+		return ""
+	case 1:
+		return "Found " + parts[0]
+	}
+	return "Found " + strings.Join(parts[:len(parts)-1], ", ") + " and " + parts[len(parts)-1]
+}
+
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // Markdown renders the report as the activity log the summarizer reads.

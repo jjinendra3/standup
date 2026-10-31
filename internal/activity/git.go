@@ -63,9 +63,11 @@ func FindRepos(roots []string, depth int) []Repo {
 	return repos
 }
 
-func gitSection(ctx context.Context, roots []string, depth int, w window.Window) string {
+// gitSection renders your git activity in the window. It also counts your commits and the repos with any activity.
+func gitSection(ctx context.Context, roots []string, depth int, w window.Window) (section string, commits, activeRepos int) {
 	repos := FindRepos(roots, depth)
 	results := make([]string, len(repos))
+	counts := make([]int, len(repos))
 	sem := make(chan struct{}, gitParallelism)
 	var wg sync.WaitGroup
 	for i, r := range repos {
@@ -74,18 +76,23 @@ func gitSection(ctx context.Context, roots []string, depth int, w window.Window)
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			results[i] = repoActivity(ctx, r, w)
+			results[i], counts[i] = repoActivity(ctx, r, w)
 		}()
 	}
 	wg.Wait()
 	var b strings.Builder
-	for _, s := range results {
+	for i, s := range results {
 		b.WriteString(s)
+		commits += counts[i]
+		if s != "" {
+			activeRepos++
+		}
 	}
-	return b.String()
+	return b.String(), commits, activeRepos
 }
 
-func repoActivity(ctx context.Context, r Repo, w window.Window) string {
+// repoActivity renders one repo's activity in the window and returns how many of your commits it lists.
+func repoActivity(ctx context.Context, r Repo, w window.Window) (string, int) {
 	git := func(args ...string) string {
 		out, _ := run.Output(ctx, "", nil, "git", append([]string{"-C", r.Path}, args...)...)
 		return out
@@ -94,7 +101,7 @@ func repoActivity(ctx context.Context, r Repo, w window.Window) string {
 	activity := branchActivity(git("reflog", "--date=unix", "--format=%gd%x09%gs"), w)
 	wip := uncommitted(git, r.Path, w, len(commits)+len(activity) > 0)
 	if len(commits)+len(activity) == 0 && wip == "" {
-		return ""
+		return "", 0
 	}
 	var b strings.Builder
 	b.WriteString("### " + r.Name + "\n")
@@ -108,7 +115,7 @@ func repoActivity(ctx context.Context, r Repo, w window.Window) string {
 		b.WriteString("Uncommitted work " + wip + "\n")
 	}
 	b.WriteString("\n")
-	return b.String()
+	return b.String(), len(commits)
 }
 
 func myCommits(git func(...string) string, w window.Window) []string {

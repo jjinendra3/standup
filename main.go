@@ -4,10 +4,12 @@ package main
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"time"
 
 	"github.com/jjinendra3/standup/internal/activity"
@@ -15,6 +17,7 @@ import (
 	"github.com/jjinendra3/standup/internal/config"
 	"github.com/jjinendra3/standup/internal/constants"
 	"github.com/jjinendra3/standup/internal/setup"
+	"github.com/jjinendra3/standup/internal/spinner"
 	"github.com/jjinendra3/standup/internal/summarize"
 	"github.com/jjinendra3/standup/internal/window"
 )
@@ -23,6 +26,40 @@ import (
 var version = "dev"
 
 const summaryTimeout = 5 * time.Minute
+
+// writingVerbs rotate under the spinner, in a random order, while the agent writes the standup.
+var writingVerbs = []string{
+	"Pondering…",
+	"Connecting the dots…",
+	"Reading between the commits…",
+	"Untangling your branches…",
+	"Translating git into English…",
+	"Trimming the jargon…",
+	"Finding the headline…",
+	"Polishing the bullets…",
+	"Hunting for blockers…",
+	"Skipping the yak shaving…",
+	"Making it sound intentional…",
+	"Rehearsing for standup…",
+	"Counting the wins…",
+	"Squashing the details…",
+	"Rebasing your thoughts…",
+	"Resolving conflicts in prose…",
+	"Consulting the rubber duck…",
+	"Converting coffee into bullets…",
+	"Blaming it on DNS…",
+	"Turning it off and on again…",
+	"Bribing the build server…",
+	"Herding cats…",
+	"Hiding the force-pushes…",
+	"Pretending to read the RFC…",
+	"Rolling a d20 for productivity…",
+	"Sneaking past the scrum master…",
+	"Muting your mic, just in case…",
+	"Inflating your story points…",
+	"Practising your camera-on face…",
+	"Waiting for someone else to go first…",
+}
 
 func main() {
 	os.Exit(run(os.Args[1:]))
@@ -74,7 +111,9 @@ func run(args []string) int {
 		return fail(err)
 	}
 	w := window.For(mode, time.Now())
+	spin := startSpinner("Collecting your activity…")
 	report := activity.Collect(ctx, cfg, w)
+	spin.Stop()
 	for _, warning := range report.Warnings {
 		fmt.Fprintln(os.Stderr, "standup: "+warning)
 	}
@@ -85,6 +124,7 @@ func run(args []string) int {
 		}
 		return 0
 	}
+	fmt.Fprintln(os.Stderr, report.Summary())
 
 	activityLog := report.Markdown()
 	prompt := summarize.Prompt(w, cfg.Rules, activityLog)
@@ -107,7 +147,11 @@ func run(args []string) int {
 	fmt.Fprintf(os.Stderr, "Writing your %s standup with %s…\n", mode, agent)
 	summaryCtx, cancel := context.WithTimeout(ctx, summaryTimeout)
 	defer cancel()
+	verbs := slices.Clone(writingVerbs)
+	rand.Shuffle(len(verbs), func(i, j int) { verbs[i], verbs[j] = verbs[j], verbs[i] })
+	spin = startSpinner(verbs...)
 	summary, err := summarize.Run(summaryCtx, cfg.Summarizer, prompt)
+	spin.Stop()
 	if err != nil {
 		return fail(fmt.Errorf("summary failed: %w", err))
 	}
@@ -120,6 +164,15 @@ func run(args []string) int {
 		fmt.Fprintf(os.Stderr, "Standup for %s copied\n", mode)
 	}
 	return 0
+}
+
+// startSpinner animates a status line on stderr while slow work runs. It returns nil, which Stop accepts,
+// when stderr is not a terminal, so piped or redirected output stays clean.
+func startSpinner(messages ...string) *spinner.Spinner {
+	if !spinner.IsTerminal(os.Stderr) {
+		return nil
+	}
+	return spinner.Start(os.Stderr, messages...)
 }
 
 func fail(err error) int {
