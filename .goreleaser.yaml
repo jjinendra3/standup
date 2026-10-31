@@ -1,0 +1,45 @@
+# Builds the release binaries and publishes them to GitHub Releases.
+# The Release workflow runs this on a v* tag; `goreleaser release --snapshot --clean` builds the same archives into dist/.
+version: 2
+project_name: standup
+
+builds:
+  - binary: standup
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    flags: [-trimpath]
+    # The v prefix matches what `standup --version` prints for a go install build.
+    ldflags:
+      - -s -w -X main.version=v{{ .Version }}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    # install.sh builds this name to find the archive, so keep them in sync.
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+changelog:
+  sort: asc
+  groups:
+    - title: Features
+      regexp: '^feat(\(.+\))?!?:'
+      order: 0
+    - title: Fixes
+      regexp: '^fix(\(.+\))?!?:'
+      order: 1
+    - title: Other
+      order: 999
+  filters:
+    exclude:
+      - '^(docs|test|chore|ci)(\(.+\))?!?:'

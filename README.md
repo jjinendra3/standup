@@ -16,13 +16,19 @@ Blockers:
 
 ## Install
 
-Needs Go 1.22 or later.
+On macOS and Linux:
 
 ```sh
-go install github.com/jjinendra3/standup@latest
+curl -fsSL https://raw.githubusercontent.com/jjinendra3/standup/master/install.sh | sh
 ```
 
-This puts `standup` in `$(go env GOPATH)/bin`, usually `~/go/bin`. Make sure that folder is on your `PATH`.
+The script downloads the latest release for your system, checks it against the release checksums and puts `standup` in `~/.local/bin`. If that folder isn't on your `PATH`, it tells you the line to add. Run it again to update. To pick a release or a folder, set the variables on the `sh` side of the pipe, as in `curl … | STANDUP_VERSION=v0.1.0 STANDUP_INSTALL_DIR=/usr/local/bin sh`.
+
+On macOS, use the script, not a browser download: the binary isn't signed, so macOS blocks it when it comes from a browser.
+
+On Windows, download the `windows` zip for your CPU from the [latest release](https://github.com/jjinendra3/standup/releases/latest) and put `standup.exe` in a folder on your `PATH`.
+
+With Go 1.22 or later you can also build it yourself: `go install github.com/jjinendra3/standup@latest`.
 
 ## Set up
 
@@ -102,7 +108,7 @@ Raycast doesn't load your shell profile, so the script sets `PATH` itself. Save 
 # @raycast.title Standup
 # @raycast.mode silent
 # @raycast.argument1 { "type": "text", "placeholder": "today | yesterday", "optional": true }
-export PATH="$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
+export PATH="$HOME/.local/bin:$HOME/go/bin:/opt/homebrew/bin:/usr/local/bin:$PATH"
 standup "${1:-today}" --copy 2>&1 >/dev/null | tail -1
 ```
 
@@ -116,6 +122,10 @@ STANDUP_E2E_AGENT=codex go test ./internal/summarize -run EndToEnd   # calls the
 ```
 
 The last prompt sent is saved to `standup-prompt.txt` in your temp folder for debugging.
+
+### Releasing
+
+Push a tag such as `v0.1.0` from a commit where CI passed. The Release workflow runs the tests and then [GoReleaser](https://goreleaser.com), which builds macOS, Linux and Windows binaries for amd64 and arm64 and publishes them with `checksums.txt` and a changelog from the commit messages. `goreleaser release --snapshot --clean` builds the same archives into `dist/` without publishing.
 
 ## License
 
