@@ -29,7 +29,7 @@ func TestChoose(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
-			got, err := choose(&reads{chunks: tt.input}, &out, options, tt.def)
+			got, err := choose(&reads{chunks: tt.input}, &out, options, tt.def, 0)
 			if err != nil || got != tt.want {
 				t.Fatalf("choose() = %d, %v, want %d", got, err, tt.want)
 			}
@@ -42,7 +42,7 @@ func TestChoose(t *testing.T) {
 
 func TestChooseInterrupted(t *testing.T) {
 	var out bytes.Buffer
-	if _, err := choose(&reads{chunks: []string{"\x1b[B", "\x03"}}, &out, []string{"a", "b"}, 0); !errors.Is(err, ErrInterrupted) {
+	if _, err := choose(&reads{chunks: []string{"\x1b[B", "\x03"}}, &out, []string{"a", "b"}, 0, 0); !errors.Is(err, ErrInterrupted) {
 		t.Fatalf("err = %v, want ErrInterrupted", err)
 	}
 	if !strings.HasSuffix(out.String(), "\x1b[2A\x1b[J") {
@@ -51,7 +51,7 @@ func TestChooseInterrupted(t *testing.T) {
 }
 
 func TestChooseEndOfInput(t *testing.T) {
-	got, err := choose(&reads{chunks: []string{"\x1b[B"}}, io.Discard, []string{"a", "b"}, 0)
+	got, err := choose(&reads{chunks: []string{"\x1b[B"}}, io.Discard, []string{"a", "b"}, 0, 0)
 	if !errors.Is(err, io.EOF) || got != 1 {
 		t.Errorf("choose() = %d, %v, want 1, EOF", got, err)
 	}
@@ -59,9 +59,50 @@ func TestChooseEndOfInput(t *testing.T) {
 
 func TestDrawMarksTheCurrentOption(t *testing.T) {
 	var out bytes.Buffer
-	draw(&out, []string{"a", "b"}, 1)
+	draw(&out, []string{"a", "b"}, 1, 0)
 	if got, want := out.String(), "\r\x1b[2K    a\r\n\r\x1b[2K  ❯ b\r\n"; got != want {
 		t.Errorf("draw wrote %q, want %q", got, want)
+	}
+}
+
+func TestLongOptionsAreCutToFitButChosenInFull(t *testing.T) {
+	long := "Claude Code (claude), installed"
+	var out bytes.Buffer
+	// 16 columns leave 11 for the option after the gutter and a spare column
+	got, err := choose(&reads{chunks: []string{"\r"}}, &out, []string{long, "b"}, 0, 16)
+	if err != nil || got != 0 {
+		t.Fatalf("choose() = %d, %v", got, err)
+	}
+	drawn, collapsed, _ := strings.Cut(out.String(), "\x1b[2A")
+	if want := "\r\x1b[2K  ❯ Claude Cod…\r\n\r\x1b[2K    b\r\n"; drawn != want {
+		t.Errorf("drew %q, want %q", drawn, want)
+	}
+	for _, line := range strings.Split(drawn, "\r\n") {
+		if n := len([]rune(strings.TrimPrefix(line, "\r\x1b[2K"))); n > 15 {
+			t.Errorf("line %q is %d columns wide on a 16-column terminal", line, n)
+		}
+	}
+	if !strings.Contains(collapsed, long) {
+		t.Errorf("collapsed choice %q does not show the whole option", collapsed)
+	}
+}
+
+func TestFit(t *testing.T) {
+	tests := []struct {
+		s    string
+		n    int
+		want string
+	}{
+		{"opus", 10, "opus"},
+		{"opus", 4, "opus"},
+		{"sonnet", 4, "son…"},
+		{"modèle long", 7, "modèle…"},
+		{"unknown width", 0, "unknown width"},
+	}
+	for _, tt := range tests {
+		if got := fit(tt.s, tt.n); got != tt.want {
+			t.Errorf("fit(%q, %d) = %q, want %q", tt.s, tt.n, got, tt.want)
+		}
 	}
 }
 

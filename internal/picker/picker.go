@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"unicode/utf8"
 
 	"golang.org/x/term"
 )
@@ -39,11 +40,16 @@ func Select(tty *os.File, keys io.Reader, out io.Writer, options []string, def i
 		return 0, err
 	}
 	defer term.Restore(int(tty.Fd()), state)
-	return choose(keys, out, options, def)
+	width, _, err := term.GetSize(int(tty.Fd()))
+	if err != nil {
+		width = 0
+	}
+	return choose(keys, out, options, def, width)
 }
 
-func choose(keys io.Reader, out io.Writer, options []string, cur int) (int, error) {
-	draw(out, options, cur)
+// choose runs the picker on a terminal width columns wide, or of unknown width when it is 0.
+func choose(keys io.Reader, out io.Writer, options []string, cur, width int) (int, error) {
+	draw(out, options, cur, width)
 	buf := make([]byte, 64)
 	for {
 		n, err := keys.Read(buf)
@@ -66,20 +72,33 @@ func choose(keys io.Reader, out io.Writer, options []string, cur int) (int, erro
 			}
 		}
 		fmt.Fprintf(out, "\x1b[%dA", len(options))
-		draw(out, options, cur)
+		draw(out, options, cur, width)
 	}
 }
 
+// gutter is the width of the "  ❯ " before each option.
+const gutter = 4
+
 // draw writes one line per option, marking the current one, and leaves the cursor below the list.
+// Options are cut to fit the width, because a line that wraps would throw off moving back up to redraw.
 // The terminal is in raw mode, so each line ends with an explicit carriage return.
-func draw(out io.Writer, options []string, cur int) {
+func draw(out io.Writer, options []string, cur, width int) {
 	for i, o := range options {
 		marker := "  "
 		if i == cur {
 			marker = "❯ "
 		}
-		fmt.Fprintf(out, "\r\x1b[2K  %s%s\r\n", marker, o)
+		// One column spare, as some terminals wrap as soon as the last column is written
+		fmt.Fprintf(out, "\r\x1b[2K  %s%s\r\n", marker, fit(o, width-gutter-1))
 	}
+}
+
+// fit shortens s to n characters, ending in … when it cuts. n <= 0 leaves s whole.
+func fit(s string, n int) string {
+	if n <= 0 || utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	return string([]rune(s)[:n-1]) + "…"
 }
 
 // parseKeys turns raw terminal input into keys. One read can hold several keys when one is held down.
